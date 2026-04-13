@@ -72,7 +72,9 @@ def fetch_hrrr(
         cache_file = CACHE_DIR / f"hrrr_{cycle_str}_f{fhr:02d}.nc"
         if cache_file.exists():
             try:
-                cached_ds = xr.open_dataset(cache_file)
+                # Lazy-load via dask so per-fhr arrays stay on disk until
+                # actually materialized downstream (Phase 3).
+                cached_ds = xr.open_dataset(cache_file, chunks={})
                 if all(name in cached_ds.data_vars for name in variables.values()):
                     logger.info("Cache hit: %s fhr=%d", cycle_str, fhr)
                     for friendly_name in variables.values():
@@ -119,14 +121,15 @@ def fetch_hrrr(
             except Exception as e:
                 logger.warning("Failed to cache fhr=%d: %s", fhr, e)
 
-    # Concatenate across forecast hours
+    # Concatenate across forecast hours, keeping each fhr as its own
+    # dask chunk so the full stack never materializes in memory until
+    # an explicit .values / .compute() (Phase 3).
     output = {}
     for name, arrays in results.items():
         if arrays:
             try:
-                output[name] = xr.concat(arrays, dim="valid_time").sortby(
-                    "valid_time"
-                )
+                stacked = xr.concat(arrays, dim="valid_time").sortby("valid_time")
+                output[name] = stacked.chunk({"valid_time": 1})
             except Exception as e:
                 logger.warning("Failed to concat %s: %s", name, e)
 

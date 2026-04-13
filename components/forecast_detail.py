@@ -150,12 +150,16 @@ def build_meteogram(
                 lon_vals = da.longitude.values
 
                 if lat_vals.ndim == 2:
-                    # 2D coordinate arrays — find nearest cell
-                    dist = (lat_vals - lat) ** 2 + (lon_vals - lon) ** 2
-                    idx = np.unravel_index(np.argmin(dist), dist.shape)
-                    if "valid_time" in da.dims:
-                        return da.isel(y=idx[0], x=idx[1])
-                    return da.isel(y=idx[0], x=idx[1])
+                    # 2D coords — find nearest cell. Use float32 to halve
+                    # the transient distance buffer (~15 MB -> ~7 MB on
+                    # the HRRR 1059x1799 grid). Phase 3.
+                    dlat = lat_vals.astype(np.float32, copy=False) - np.float32(lat)
+                    dlon = lon_vals.astype(np.float32, copy=False) - np.float32(lon)
+                    dist = dlat * dlat + dlon * dlon
+                    flat_idx = int(np.argmin(dist))
+                    del dlat, dlon, dist
+                    iy, ix = np.unravel_index(flat_idx, lat_vals.shape)
+                    return da.isel(y=iy, x=ix)
             return None
 
         # Build time series

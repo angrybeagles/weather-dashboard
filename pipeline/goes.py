@@ -187,9 +187,13 @@ def goes_to_plotly_image(
     if bounds is None:
         bounds = CONUS_BOUNDS
 
-    lat = da.coords["latitude"].values
-    lon = da.coords["longitude"].values
-    data = da.values
+    # Stride-decimate the source grid before interpolation (Phase 3).
+    # GOES native CONUS is ~1500x2500 px; 4x decimation reduces the point
+    # cloud 16x with no visible loss at our 1200x800 output resolution.
+    stride = 4
+    lat = da.coords["latitude"].values[::stride, ::stride]
+    lon = da.coords["longitude"].values[::stride, ::stride]
+    data = da.values[::stride, ::stride].astype(np.float32, copy=False)
 
     # Mask to CONUS bounds
     mask = (
@@ -199,10 +203,9 @@ def goes_to_plotly_image(
         & (lon <= bounds["lon_max"])
     )
 
-    # For the image overlay we need a regular grid — resample
-    # This is a simplified approach; for production you'd use pyresample
-    lat_bins = np.linspace(bounds["lat_min"], bounds["lat_max"], 800)
-    lon_bins = np.linspace(bounds["lon_min"], bounds["lon_max"], 1200)
+    # Output grid (kept at 800x1200 — final image resolution)
+    lat_bins = np.linspace(bounds["lat_min"], bounds["lat_max"], 800, dtype=np.float32)
+    lon_bins = np.linspace(bounds["lon_min"], bounds["lon_max"], 1200, dtype=np.float32)
 
     from scipy.interpolate import griddata
 
@@ -216,6 +219,7 @@ def goes_to_plotly_image(
 
     lon_grid, lat_grid = np.meshgrid(lon_bins, lat_bins)
     gridded = griddata(points, values, (lon_grid, lat_grid), method="nearest")
+    del points, values, lat, lon, data, mask, valid, lon_grid, lat_grid
 
     # Normalize to 0-255
     vmin, vmax = np.nanpercentile(gridded[~np.isnan(gridded)], [2, 98])
