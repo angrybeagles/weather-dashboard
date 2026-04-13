@@ -1,0 +1,11 @@
+venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+data/hrrr/
+data/goes/
+data/nexrad/
+*.nc
+*.grib2
+.env
+.DS_Store

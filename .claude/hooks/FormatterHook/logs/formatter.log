@@ -1,0 +1,25 @@
+[2026-04-02T03:51:58.559Z] Error: Unexpected end of JSON input
+[2026-04-03T01:16:36.150Z] Formatting: /home/bigt/terrytech-store/tests/e2e/home.spec.ts
+[2026-04-03T01:16:37.232Z] Prettier: success
+[2026-04-03T01:16:46.874Z] Formatting: /home/bigt/terrytech-store/tests/e2e/navigation.spec.ts
+[2026-04-03T01:16:47.590Z] Prettier: success
+[2026-04-03T01:17:01.386Z] Formatting: /home/bigt/terrytech-store/tests/e2e/browse.spec.ts
+[2026-04-03T01:17:02.102Z] Prettier: success
+[2026-04-03T01:17:14.427Z] Formatting: /home/bigt/terrytech-store/tests/e2e/listing-detail.spec.ts
+[2026-04-03T01:17:15.164Z] Prettier: success
+[2026-04-03T01:17:47.394Z] Formatting: /home/bigt/terrytech-store/src/__tests__/upload.test.js
+[2026-04-03T01:17:48.135Z] Prettier: success
+[2026-04-03T01:19:51.499Z] Formatting: /home/bigt/terrytech-store/src/__tests__/upload.test.js
+[2026-04-03T01:19:52.337Z] Prettier: success
+[2026-04-03T01:20:17.956Z] Formatting: /home/bigt/terrytech-store/src/__tests__/upload.test.js
+[2026-04-03T01:20:18.712Z] Prettier: success
+[2026-04-03T01:20:54.814Z] Formatting: /home/bigt/terrytech-store/src/__tests__/upload.test.js
+[2026-04-03T01:20:55.708Z] Prettier: success
+[2026-04-03T01:21:22.156Z] Formatting: /home/bigt/terrytech-store/src/__tests__/fitCheck.test.js
+[2026-04-03T01:21:22.896Z] Prettier: success
+[2026-04-03T01:21:58.156Z] Formatting: /home/bigt/terrytech-store/src/__tests__/processScan.test.js
+[2026-04-03T01:21:58.953Z] Prettier: success
+[2026-04-03T01:41:32.297Z] Formatting: /home/bigt/.claude/settings.json
+[2026-04-03T01:41:33.009Z] Prettier: success
+[2026-04-03T01:42:05.737Z] Formatting: /home/bigt/terrytech-store/.claude/settings.json
+[2026-04-03T01:42:06.399Z] Prettier: success
