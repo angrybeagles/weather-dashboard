@@ -172,7 +172,7 @@ def ms_to_knots(da: xr.DataArray) -> xr.DataArray:
     return da * 1.94384
 
 
-def clean_cache(max_age_hours: int = 24) -> None:
+def clean_cache(max_age_hours: int = 6) -> None:
     """Remove cached HRRR files older than max_age_hours."""
     cutoff = datetime.now(timezone.utc) - timedelta(hours=max_age_hours)
     for f in CACHE_DIR.glob("hrrr_*.nc"):

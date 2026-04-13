@@ -5,6 +5,7 @@ Uses APScheduler to run data fetching pipelines at configurable intervals
 without blocking the Dash UI thread.
 """
 
+import gc
 import logging
 from datetime import datetime, timezone
 
@@ -35,17 +36,28 @@ class DataStore:
         self.last_updated: dict[str, datetime] = {}
 
     def update_hrrr(self, data: dict) -> None:
+        old = self.hrrr_data
         self.hrrr_data = data
+        del old
+        gc.collect()
         self.last_updated["hrrr"] = datetime.now(timezone.utc)
         logger.info("HRRR data updated (%d variables)", len(data))
 
     def update_goes(self, channel: str, data) -> None:
+        old = self.goes_data.get(channel)
         self.goes_data[channel] = data
+        if old is not None:
+            del old
+            gc.collect()
         self.last_updated[f"goes_{channel}"] = datetime.now(timezone.utc)
         logger.info("GOES %s updated", channel)
 
     def update_nexrad(self, data) -> None:
+        old = self.nexrad_data
         self.nexrad_data = data
+        if old is not None:
+            del old
+            gc.collect()
         self.last_updated["nexrad"] = datetime.now(timezone.utc)
         logger.info("NEXRAD radar updated")
 
@@ -69,9 +81,10 @@ def _refresh_hrrr():
     try:
         from pipeline.hrrr import fetch_hrrr, clean_cache
 
+        clean_cache(max_age_hours=6)
         data = fetch_hrrr()
         store.update_hrrr(data)
-        clean_cache(max_age_hours=24)
+        clean_cache(max_age_hours=6)
     except Exception as e:
         logger.error("HRRR refresh failed: %s", e)
 
