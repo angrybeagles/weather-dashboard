@@ -219,9 +219,9 @@ def update_map(active_layers, forecast_hour, sat_channel, _n):
         try:
             from pipeline.goes import goes_to_plotly_image
 
-            sat_da = store.goes_data.get(sat_channel) or next(
-                iter(store.goes_data.values()), None
-            )
+            sat_da = store.goes_data.get(sat_channel)
+            if sat_da is None:
+                sat_da = next(iter(store.goes_data.values()), None)
             if sat_da is not None:
                 img = goes_to_plotly_image(sat_da)
                 if img:

@@ -107,6 +107,16 @@ def fetch_hrrr(
                 valid_time = cycle + timedelta(hours=fhr)
                 da = da.assign_coords(valid_time=valid_time)
 
+                # Drop scalar non-dim coords (heightAboveGround, surface,
+                # etc.) — they conflict between variables (2m vs 10m) when
+                # combined into a single Dataset and across fhrs on concat.
+                drop_coords = [
+                    c for c in da.coords
+                    if c not in da.dims and c not in ("latitude", "longitude", "valid_time")
+                ]
+                if drop_coords:
+                    da = da.reset_coords(drop_coords, drop=True)
+
                 merged_arrays[friendly_name] = da
                 results[friendly_name].append(da)
             except Exception as e:
@@ -128,7 +138,12 @@ def fetch_hrrr(
     for name, arrays in results.items():
         if arrays:
             try:
-                stacked = xr.concat(arrays, dim="valid_time").sortby("valid_time")
+                stacked = xr.concat(
+                    arrays,
+                    dim="valid_time",
+                    coords="minimal",
+                    compat="override",
+                ).sortby("valid_time")
                 output[name] = stacked.chunk({"valid_time": 1})
             except Exception as e:
                 logger.warning("Failed to concat %s: %s", name, e)
