@@ -25,6 +25,7 @@ from components.controls import (
     build_time_slider,
 )
 from components.forecast_detail import build_meteogram, build_point_forecast_panel
+from components.memory_stats import build_memory_panel, render_rows
 from components.map_layer import (
     add_alerts_layer,
     add_nexrad_radar_layer,
@@ -81,6 +82,7 @@ app.layout = html.Div(
             className="left-panel",
             children=[
                 build_layer_controls(),
+                build_memory_panel(),
                 build_time_slider(),
                 build_satellite_selector(),
                 html.Hr(style={"borderColor": "#2a3548", "margin": "16px 0"}),
@@ -309,6 +311,25 @@ def update_alerts_panel(_n):
 def update_status(_n):
     """Refresh the status bar."""
     return build_status_bar(store.last_updated)
+
+
+@callback(
+    Output("memory-stats-content", "children"),
+    Input("refresh-interval", "n_intervals"),
+)
+def update_memory_panel(_n):
+    """Refresh per-cache sizes, process RSS, and on-disk cache total."""
+    from pipeline.hrrr import CACHE_DIR as HRRR_CACHE_DIR
+    from utils.memory import (
+        disk_cache_bytes,
+        process_rss_mb,
+        store_bytes_breakdown,
+    )
+
+    breakdown = store_bytes_breakdown(store)
+    rss_mb = process_rss_mb()
+    disk_mb = disk_cache_bytes(HRRR_CACHE_DIR) / (1024 * 1024)
+    return render_rows(breakdown, rss_mb, disk_mb)
 
 
 # ---------------------------------------------------------------------------
