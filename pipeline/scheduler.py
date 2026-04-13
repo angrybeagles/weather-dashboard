@@ -28,7 +28,9 @@ class DataStore:
     """
 
     def __init__(self):
-        self.hrrr_data: dict = {}
+        self.hrrr_data: dict = {}          # full cycle — still set after _refresh_hrrr
+        self.hrrr_window: dict = {}        # active slice for rendering
+        self.hrrr_window_spec: tuple | None = None  # (cycle_str, center_fhr, radius, frozenset(vars))
         self.goes_data: dict = {}
         self.nexrad_data: dict | None = None
         self.alerts: list = []
@@ -74,8 +76,10 @@ class DataStore:
     # --- Eviction API (called from app callbacks / Clear buttons) ---
 
     def evict_hrrr(self) -> None:
-        if self.hrrr_data:
+        if self.hrrr_data or self.hrrr_window:
             self.hrrr_data = {}
+            self.hrrr_window = {}
+            self.hrrr_window_spec = None
             gc.collect()
             logger.info("HRRR cache evicted")
 
@@ -108,6 +112,33 @@ class DataStore:
 
     # --- On-demand loaders (called by view callbacks) ---
 
+    def ensure_hrrr_window(
+        self,
+        variables: list[str],
+        center_fhr: int,
+        radius: int = 2,
+    ) -> None:
+        """Load only the needed variables within ±radius fhrs of center_fhr
+        from the on-disk NetCDF cache. Drops the prior window if its spec
+        differs (different cycle / center / vars)."""
+        from pipeline.hrrr import latest_cached_cycle, load_hrrr_window
+
+        cycle = latest_cached_cycle()
+        if cycle is None:
+            return  # no disk cache yet; scheduler will fill it
+        cycle_str = cycle.strftime("%Y%m%d_%H")
+        spec = (cycle_str, center_fhr, radius, frozenset(variables))
+        if spec == self.hrrr_window_spec and self.hrrr_window:
+            return
+
+        # Drop prior window before loading the new one to minimize peak.
+        self.hrrr_window = {}
+        gc.collect()
+        self.hrrr_window = load_hrrr_window(
+            cycle=cycle, center_fhr=center_fhr, radius=radius, variables=variables
+        )
+        self.hrrr_window_spec = spec
+
     def ensure_goes(self, channel: str) -> None:
         """Load the given channel if absent; evict siblings."""
         from pipeline.goes import clear_png_cache, fetch_goes_channel
@@ -133,14 +164,22 @@ store = DataStore()
 
 
 def _refresh_hrrr():
-    """Fetch latest HRRR cycle."""
+    """Ensure the on-disk HRRR cache is up to date with the latest cycle.
+
+    The in-memory store no longer holds the full concatenated cycle —
+    the view callback loads a small fhr window from disk on demand.
+    This job's job is purely to keep the per-fhr NetCDF files fresh.
+    """
     try:
-        from pipeline.hrrr import fetch_hrrr, clean_cache
+        from pipeline.hrrr import clean_cache, fetch_hrrr
 
         clean_cache(max_age_hours=6)
-        data = fetch_hrrr()
-        store.update_hrrr(data)
+        fetch_hrrr()  # writes the per-fhr NetCDF files
         clean_cache(max_age_hours=6)
+        store.last_updated["hrrr"] = datetime.now(timezone.utc)
+        # Invalidate active window so the next view call rebuilds against
+        # the new cycle.
+        store.hrrr_window_spec = None
     except Exception as e:
         logger.error("HRRR refresh failed: %s", e)
 

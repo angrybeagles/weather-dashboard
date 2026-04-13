@@ -148,24 +148,47 @@ def update_map(active_layers, forecast_hour, sat_channel, _n):
 
         fig = add_radar_sites_layer(fig, fetch_nexrad_sites())
 
-    # --- HRRR model layers ---
-    hrrr = store.hrrr_data
+    # --- HRRR model layers (loaded from disk window on demand) ---
+    needed_vars: list[str] = []
+    if "temperature" in active_layers:
+        needed_vars.append("temperature_2m")
+    if "wind" in active_layers:
+        needed_vars += ["u_wind_10m", "v_wind_10m"]
+    if "reflectivity" in active_layers:
+        needed_vars.append("composite_reflectivity")
 
-    if hrrr and "temperature_2m" in hrrr and "temperature" in active_layers:
+    if needed_vars:
+        store.ensure_hrrr_window(needed_vars, center_fhr=forecast_hour, radius=2)
+    else:
+        store.evict_hrrr()
+
+    hrrr = store.hrrr_window
+
+    def _slice_at_fhr(da):
+        """Pick the valid_time step matching the slider's forecast_hour."""
+        if "valid_time" not in da.dims:
+            return da
+        # The window contains fhrs [forecast_hour-2, forecast_hour+2] clipped;
+        # our target is the one whose offset from cycle == forecast_hour.
         try:
-            temp_da = hrrr["temperature_2m"]
-            if (
-                "valid_time" in temp_da.dims
-                and len(temp_da.valid_time) > forecast_hour
-            ):
-                temp_slice = temp_da.isel(valid_time=forecast_hour)
-            elif "valid_time" in temp_da.dims:
-                temp_slice = temp_da.isel(valid_time=-1)
-            else:
-                temp_slice = temp_da
+            cycle = store.last_updated.get("hrrr")
+            if cycle is None:
+                return da.isel(valid_time=min(forecast_hour, len(da.valid_time) - 1))
+            import numpy as _np
+            import pandas as _pd
 
+            target = _pd.Timestamp(cycle).tz_localize(None) + _pd.Timedelta(hours=forecast_hour)
+            vt = _pd.to_datetime(da.valid_time.values)
+            idx = int(_np.argmin(_np.abs(vt - target)))
+            return da.isel(valid_time=idx)
+        except Exception:
+            return da.isel(valid_time=min(forecast_hour, len(da.valid_time) - 1))
+
+    if "temperature_2m" in hrrr and "temperature" in active_layers:
+        try:
             from pipeline.hrrr import kelvin_to_fahrenheit
 
+            temp_slice = _slice_at_fhr(hrrr["temperature_2m"])
             temps_f = kelvin_to_fahrenheit(temp_slice).values
             lats = temp_slice.latitude.values
             lons = temp_slice.longitude.values
@@ -173,24 +196,12 @@ def update_map(active_layers, forecast_hour, sat_channel, _n):
         except Exception as e:
             logger.warning("Temperature layer error: %s", e)
 
-    if (
-        hrrr
-        and "u_wind_10m" in hrrr
-        and "v_wind_10m" in hrrr
-        and "wind" in active_layers
-    ):
+    if "u_wind_10m" in hrrr and "v_wind_10m" in hrrr and "wind" in active_layers:
         try:
             from pipeline.hrrr import get_wind_speed_direction, ms_to_mph
 
-            u = hrrr["u_wind_10m"]
-            v = hrrr["v_wind_10m"]
-            if "valid_time" in u.dims and len(u.valid_time) > forecast_hour:
-                u = u.isel(valid_time=forecast_hour)
-                v = v.isel(valid_time=forecast_hour)
-            elif "valid_time" in u.dims:
-                u = u.isel(valid_time=-1)
-                v = v.isel(valid_time=-1)
-
+            u = _slice_at_fhr(hrrr["u_wind_10m"])
+            v = _slice_at_fhr(hrrr["v_wind_10m"])
             speed, direction = get_wind_speed_direction(u, v)
             speed_mph = ms_to_mph(speed).values
             fig = add_wind_layer(
@@ -203,13 +214,9 @@ def update_map(active_layers, forecast_hour, sat_channel, _n):
         except Exception as e:
             logger.warning("Wind layer error: %s", e)
 
-    if hrrr and "composite_reflectivity" in hrrr and "reflectivity" in active_layers:
+    if "composite_reflectivity" in hrrr and "reflectivity" in active_layers:
         try:
-            refl = hrrr["composite_reflectivity"]
-            if "valid_time" in refl.dims and len(refl.valid_time) > forecast_hour:
-                refl = refl.isel(valid_time=forecast_hour)
-            elif "valid_time" in refl.dims:
-                refl = refl.isel(valid_time=-1)
+            refl = _slice_at_fhr(hrrr["composite_reflectivity"])
             fig = add_reflectivity_layer(
                 fig, refl.latitude.values, refl.longitude.values, refl.values
             )
@@ -290,11 +297,27 @@ def show_point_forecast(coords):
     prevent_initial_call=True,
 )
 def show_meteogram(coords):
-    """Build HRRR meteogram for the clicked point."""
+    """Build HRRR meteogram for the clicked point.
+
+    Loads the full fhr range for the 4 variables the meteogram needs,
+    lazily from the on-disk NetCDF cache (it doesn't need all 10 vars).
+    """
     if coords is None:
         return no_update
 
-    return build_meteogram(store.hrrr_data, coords["lat"], coords["lon"])
+    from pipeline.hrrr import latest_cached_cycle, load_hrrr_window
+
+    cycle = latest_cached_cycle()
+    if cycle is None:
+        return html.Div("HRRR data not yet loaded", className="meteogram-empty")
+
+    hrrr = load_hrrr_window(
+        cycle=cycle,
+        center_fhr=9,
+        radius=9,  # covers fhrs 0..18
+        variables=["temperature_2m", "u_wind_10m", "v_wind_10m", "total_precip"],
+    )
+    return build_meteogram(hrrr, coords["lat"], coords["lon"])
 
 
 @callback(

@@ -182,6 +182,76 @@ def ms_to_knots(da: xr.DataArray) -> xr.DataArray:
     return da * 1.94384
 
 
+def latest_cached_cycle() -> datetime | None:
+    """Return the most recent cycle datetime for which on-disk files exist."""
+    cycles = set()
+    for f in CACHE_DIR.glob("hrrr_*_f*.nc"):
+        parts = f.stem.split("_")
+        if len(parts) < 4:
+            continue
+        try:
+            t = datetime.strptime(f"{parts[1]}_{parts[2]}", "%Y%m%d_%H")
+            cycles.add(t)
+        except ValueError:
+            continue
+    return max(cycles) if cycles else None
+
+
+def load_hrrr_window(
+    cycle: datetime | None = None,
+    center_fhr: int = 0,
+    radius: int = 2,
+    variables: list[str] | None = None,
+) -> dict[str, xr.DataArray]:
+    """
+    Open the per-fhr NetCDF cache files within [center_fhr-radius, center_fhr+radius]
+    and stack on valid_time — restricted to the requested variables.
+
+    Files that don't exist are skipped silently (they'll be populated by the next
+    full fetch_hrrr cycle). Returned DataArrays are dask-chunked on valid_time so
+    the working set is bounded by the window size, not the full 19-fhr horizon.
+    """
+    if cycle is None:
+        cycle = latest_cached_cycle()
+        if cycle is None:
+            return {}
+    if variables is None:
+        friendly_names = list(HRRR_VARIABLES.values())
+    else:
+        friendly_names = list(variables)
+
+    cycle_str = cycle.strftime("%Y%m%d_%H")
+    lo = max(min(HRRR_FHOURS), center_fhr - radius)
+    hi = min(max(HRRR_FHOURS), center_fhr + radius)
+
+    collected: dict[str, list[xr.DataArray]] = {n: [] for n in friendly_names}
+    for fhr in range(lo, hi + 1):
+        cache_file = CACHE_DIR / f"hrrr_{cycle_str}_f{fhr:02d}.nc"
+        if not cache_file.exists():
+            continue
+        try:
+            ds = xr.open_dataset(cache_file, chunks={})
+        except Exception as e:
+            logger.warning("Failed to open %s: %s", cache_file.name, e)
+            continue
+        for name in friendly_names:
+            if name in ds.data_vars:
+                collected[name].append(ds[name])
+
+    output: dict[str, xr.DataArray] = {}
+    for name, arrays in collected.items():
+        if not arrays:
+            continue
+        try:
+            stacked = xr.concat(
+                arrays, dim="valid_time", coords="minimal", compat="override"
+            ).sortby("valid_time")
+            output[name] = stacked.chunk({"valid_time": 1})
+        except Exception as e:
+            logger.warning("Failed to concat window for %s: %s", name, e)
+    return output
+
+
 def clean_cache(max_age_hours: int = 6) -> None:
     """Remove cached HRRR files older than max_age_hours."""
     cutoff = datetime.now(timezone.utc) - timedelta(hours=max_age_hours)
