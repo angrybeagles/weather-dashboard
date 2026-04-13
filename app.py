@@ -217,19 +217,21 @@ def update_map(active_layers, forecast_hour, sat_channel, _n):
             logger.warning("Reflectivity layer error: %s", e)
 
     # --- Satellite (GOES) ---
-    if "satellite_ir" in active_layers and store.goes_data:
+    if "satellite_ir" in active_layers:
         try:
             from pipeline.goes import goes_to_plotly_image
 
+            store.ensure_goes(sat_channel)
             sat_da = store.goes_data.get(sat_channel)
-            if sat_da is None:
-                sat_da = next(iter(store.goes_data.values()), None)
             if sat_da is not None:
                 img = goes_to_plotly_image(sat_da)
                 if img:
                     fig = add_satellite_layer(fig, img)
         except Exception as e:
             logger.warning("Satellite layer error: %s", e)
+    elif store.goes_data:
+        # Satellite layer off: drop all channels to free memory.
+        store.evict_goes()
 
     # --- Observations ---
     if "observations" in active_layers and store.observations:

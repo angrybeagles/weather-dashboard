@@ -106,6 +106,27 @@ class DataStore:
     def evict_observations(self) -> None:
         self.observations = []
 
+    # --- On-demand loaders (called by view callbacks) ---
+
+    def ensure_goes(self, channel: str) -> None:
+        """Load the given channel if absent; evict siblings."""
+        from pipeline.goes import clear_png_cache, fetch_goes_channel
+
+        stale = [c for c in self.goes_data if c != channel]
+        for c in stale:
+            del self.goes_data[c]
+            clear_png_cache(c)
+        if stale:
+            gc.collect()
+            logger.info("GOES evicted unused channels: %s", stale)
+
+        if channel not in self.goes_data:
+            data = fetch_goes_channel(channel_name=channel)
+            if data is not None:
+                self.goes_data[channel] = data
+                self.last_updated[f"goes_{channel}"] = datetime.now(timezone.utc)
+                logger.info("GOES %s loaded on demand", channel)
+
 
 # Global data store
 store = DataStore()
@@ -125,11 +146,18 @@ def _refresh_hrrr():
 
 
 def _refresh_goes():
-    """Fetch latest GOES imagery for key channels."""
+    """Refresh only the channels currently resident in the store.
+
+    The initial active channel is seeded lazily by app callbacks via
+    store.ensure_goes(); subsequent refreshes update just those.
+    """
     try:
         from pipeline.goes import fetch_goes_channel
 
-        for channel in ["ir", "visible", "water_vapor"]:
+        channels = list(store.goes_data.keys())
+        if not channels:
+            return  # nothing resident; the first view toggle will load on demand
+        for channel in channels:
             data = fetch_goes_channel(channel_name=channel)
             if data is not None:
                 store.update_goes(channel, data)
