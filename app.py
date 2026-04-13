@@ -15,7 +15,7 @@ Features:
 
 import logging
 
-from dash import Dash, Input, Output, State, callback, ctx, dcc, html, no_update
+from dash import ALL, Dash, Input, Output, State, callback, ctx, dcc, html, no_update
 
 from components.alerts_panel import build_alerts_panel
 from components.controls import (
@@ -311,6 +311,41 @@ def update_alerts_panel(_n):
 def update_status(_n):
     """Refresh the status bar."""
     return build_status_bar(store.last_updated)
+
+
+@callback(
+    Output("memory-stats-content", "children", allow_duplicate=True),
+    Input({"type": "mem-clear", "cache": ALL}, "n_clicks"),
+    prevent_initial_call=True,
+)
+def on_memory_clear(n_clicks_list):
+    """Dispatch Clear button to the matching evict_* method."""
+    triggered = ctx.triggered_id
+    if not triggered or not any(n_clicks_list or []):
+        return no_update
+    cache = triggered.get("cache")
+    evictor = {
+        "hrrr": store.evict_hrrr,
+        "goes": lambda: store.evict_goes(None),
+        "nexrad": store.evict_nexrad,
+        "alerts": store.evict_alerts,
+        "observations": store.evict_observations,
+    }.get(cache)
+    if evictor:
+        evictor()
+
+    from pipeline.hrrr import CACHE_DIR as HRRR_CACHE_DIR
+    from utils.memory import (
+        disk_cache_bytes,
+        process_rss_mb,
+        store_bytes_breakdown,
+    )
+
+    return render_rows(
+        store_bytes_breakdown(store),
+        process_rss_mb(),
+        disk_cache_bytes(HRRR_CACHE_DIR) / (1024 * 1024),
+    )
 
 
 @callback(

@@ -71,6 +71,41 @@ class DataStore:
         self.last_updated["observations"] = datetime.now(timezone.utc)
         logger.info("Observations updated (%d stations)", len(obs))
 
+    # --- Eviction API (called from app callbacks / Clear buttons) ---
+
+    def evict_hrrr(self) -> None:
+        if self.hrrr_data:
+            self.hrrr_data = {}
+            gc.collect()
+            logger.info("HRRR cache evicted")
+
+    def evict_goes(self, channel: str | None = None) -> None:
+        """Evict one channel or all. Also drops its rendered PNG."""
+        from pipeline.goes import clear_png_cache
+
+        if channel is None:
+            self.goes_data.clear()
+            clear_png_cache()
+            gc.collect()
+            logger.info("GOES cache evicted (all channels)")
+        elif channel in self.goes_data:
+            del self.goes_data[channel]
+            clear_png_cache(channel)
+            gc.collect()
+            logger.info("GOES cache evicted (%s)", channel)
+
+    def evict_nexrad(self) -> None:
+        if self.nexrad_data is not None:
+            self.nexrad_data = None
+            gc.collect()
+            logger.info("NEXRAD cache evicted")
+
+    def evict_alerts(self) -> None:
+        self.alerts = []
+
+    def evict_observations(self) -> None:
+        self.observations = []
+
 
 # Global data store
 store = DataStore()
