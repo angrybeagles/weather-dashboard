@@ -142,11 +142,15 @@ def update_map(active_layers, forecast_hour, sat_channel, _n):
     fig = create_base_map()
 
     # --- NEXRAD real radar (MRMS composite) ---
-    if "nexrad" in active_layers and store.nexrad_data is not None:
-        fig = add_nexrad_radar_layer(fig, store.nexrad_data)
-        from pipeline.nexrad import fetch_nexrad_sites
+    if "nexrad" in active_layers:
+        store.ensure_nexrad()
+        if store.nexrad_data is not None:
+            fig = add_nexrad_radar_layer(fig, store.nexrad_data)
+            from pipeline.nexrad import fetch_nexrad_sites
 
-        fig = add_radar_sites_layer(fig, fetch_nexrad_sites())
+            fig = add_radar_sites_layer(fig, fetch_nexrad_sites())
+    elif store.nexrad_data is not None:
+        store.evict_nexrad()
 
     # --- HRRR model layers (loaded from disk window on demand) ---
     needed_vars: list[str] = []

@@ -9,7 +9,13 @@ import gc
 import logging
 from datetime import datetime, timezone
 
+import dask
 from apscheduler.schedulers.background import BackgroundScheduler
+
+# Dash callbacks run single-threaded; the threaded scheduler only adds
+# GIL contention and cross-thread allocation churn without parallelism
+# benefit on our I/O-bound paths.
+dask.config.set(scheduler="synchronous")
 
 from config import (
     ALERTS_REFRESH_INTERVAL,
@@ -46,20 +52,14 @@ class DataStore:
         logger.info("HRRR data updated (%d variables)", len(data))
 
     def update_goes(self, channel: str, data) -> None:
-        old = self.goes_data.get(channel)
+        # No explicit gc.collect(): per-channel swaps are small (~14 MB);
+        # refcounting handles the drop in microseconds.
         self.goes_data[channel] = data
-        if old is not None:
-            del old
-            gc.collect()
         self.last_updated[f"goes_{channel}"] = datetime.now(timezone.utc)
         logger.info("GOES %s updated", channel)
 
     def update_nexrad(self, data) -> None:
-        old = self.nexrad_data
         self.nexrad_data = data
-        if old is not None:
-            del old
-            gc.collect()
         self.last_updated["nexrad"] = datetime.now(timezone.utc)
         logger.info("NEXRAD radar updated")
 
@@ -103,6 +103,21 @@ class DataStore:
             self.nexrad_data = None
             gc.collect()
             logger.info("NEXRAD cache evicted")
+
+    def ensure_nexrad(self) -> None:
+        """Load latest MRMS composite synchronously if not resident."""
+        if self.nexrad_data is not None:
+            return
+        try:
+            from pipeline.nexrad import fetch_mrms_composite, radar_to_plotly_data
+
+            raw = fetch_mrms_composite()
+            if raw is not None:
+                self.nexrad_data = radar_to_plotly_data(raw, subsample=6)
+                self.last_updated["nexrad"] = datetime.now(timezone.utc)
+                logger.info("NEXRAD loaded on demand")
+        except Exception as e:
+            logger.error("NEXRAD on-demand load failed: %s", e)
 
     def evict_alerts(self) -> None:
         self.alerts = []
@@ -205,7 +220,10 @@ def _refresh_goes():
 
 
 def _refresh_nexrad():
-    """Fetch latest MRMS CONUS radar composite."""
+    """Fetch latest MRMS CONUS radar composite — skip if layer is off."""
+    if store.nexrad_data is None:
+        # Layer has never been activated (or was evicted); skip the 100 MB fetch.
+        return
     try:
         from pipeline.nexrad import fetch_mrms_composite, radar_to_plotly_data
 
