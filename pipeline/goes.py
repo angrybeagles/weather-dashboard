@@ -218,18 +218,28 @@ def goes_to_plotly_image(
     values = data[valid]
 
     lon_grid, lat_grid = np.meshgrid(lon_bins, lat_bins)
-    gridded = griddata(points, values, (lon_grid, lat_grid), method="nearest")
+    # Linear interpolation returns NaN outside the convex hull of source
+    # points, instead of smearing the nearest valid pixel across huge
+    # off-scan regions (which produced dark diagonal wedges where the
+    # ABI CONUS scan parallelogram doesn't cover the rectangular output).
+    gridded = griddata(points, values, (lon_grid, lat_grid), method="linear")
     del points, values, lat, lon, data, mask, valid, lon_grid, lat_grid
 
-    # Normalize to 0-255
-    vmin, vmax = np.nanpercentile(gridded[~np.isnan(gridded)], [2, 98])
+    # Normalize valid pixels to 0-255; off-scan stays transparent.
+    finite = np.isfinite(gridded)
+    if finite.sum() < 100:
+        logger.warning("Insufficient interpolated pixels for GOES rendering")
+        return {}
+    vmin, vmax = np.nanpercentile(gridded[finite], [2, 98])
     normalized = np.clip((gridded - vmin) / (vmax - vmin + 1e-6), 0, 1)
-    img_array = (normalized * 255).astype(np.uint8)
+    img_l = (np.nan_to_num(normalized, nan=0.0) * 255).astype(np.uint8)
+    alpha = (finite * 255).astype(np.uint8)
 
     # Flip vertically (lat increases upward)
-    img_array = np.flipud(img_array)
+    img_l = np.flipud(img_l)
+    alpha = np.flipud(alpha)
 
-    img = Image.fromarray(img_array, mode="L")
+    img = Image.fromarray(np.dstack([img_l, img_l, img_l, alpha]), mode="RGBA")
     buf = BytesIO()
     img.save(buf, format="PNG")
     b64 = base64.b64encode(buf.getvalue()).decode()
