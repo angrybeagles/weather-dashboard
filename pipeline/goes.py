@@ -110,45 +110,44 @@ def fetch_goes_channel(
         # Convert x/y to lat/lon using the projection info.
         proj_info = ds["goes_imager_projection"]
 
-        # Satellite height, longitude, sweep
+        # GOES-R projection constants (NOAA PUG L1b vol 5).
+        # `perspective_point_height` is the satellite altitude above the
+        # Earth ellipsoid surface; the projection algorithm needs the
+        # distance from Earth's *center*, so H = h + req.
         h = proj_info.attrs["perspective_point_height"]
         lon_0 = proj_info.attrs["longitude_of_projection_origin"]
         sweep = proj_info.attrs.get("sweep_angle_axis", "x")
 
-        # x and y are scanning angles in radians
-        x = ds["x"].values * h
-        y = ds["y"].values * h
-
-        # Convert geostationary projection to lat/lon
-        # Using simplified conversion (accurate to ~0.01 deg for CONUS)
         from numpy import arctan, arctan2, cos, sin, sqrt
 
-        req = 6378137.0  # equatorial radius
-        rpol = 6356752.31414  # polar radius
-        e = 0.0818191910435
+        req = proj_info.attrs.get("semi_major_axis", 6378137.0)
+        rpol = proj_info.attrs.get("semi_minor_axis", 6356752.31414)
+        H = h + req  # satellite distance from Earth's center
 
+        # x and y in the file are scanning angles (radians)
+        x = ds["x"].values
+        y = ds["y"].values
         xx, yy = np.meshgrid(x, y)
 
-        a = sin(xx / h) ** 2 + (
-            cos(xx / h) ** 2
-            * (cos(yy / h) ** 2 + (req**2 / rpol**2) * sin(yy / h) ** 2)
+        a = sin(xx) ** 2 + (
+            cos(xx) ** 2
+            * (cos(yy) ** 2 + (req**2 / rpol**2) * sin(yy) ** 2)
         )
-        b = -2 * h * cos(xx / h) * cos(yy / h)
-        c = h**2 - req**2
+        b = -2 * H * cos(xx) * cos(yy)
+        c = H**2 - req**2
 
         discriminant = b**2 - 4 * a * c
-        # Mask invalid (off-earth) pixels
         valid = discriminant >= 0
         rs = np.where(valid, (-b - sqrt(np.maximum(discriminant, 0))) / (2 * a), np.nan)
 
-        sx = rs * cos(xx / h) * cos(yy / h)
-        sy = -rs * sin(xx / h)
-        sz = rs * cos(xx / h) * sin(yy / h)
+        sx = rs * cos(xx) * cos(yy)
+        sy = -rs * sin(xx)
+        sz = rs * cos(xx) * sin(yy)
 
         lat = np.degrees(
-            arctan((req**2 / rpol**2) * sz / sqrt((h - sx) ** 2 + sy**2))
+            arctan((req**2 / rpol**2) * sz / sqrt((H - sx) ** 2 + sy**2))
         )
-        lon = np.degrees(arctan2(sy, h - sx)) + lon_0
+        lon = np.degrees(arctan2(sy, H - sx)) + lon_0
 
         # Create DataArray with lat/lon
         result = xr.DataArray(
