@@ -187,13 +187,14 @@ def goes_to_plotly_image(
     if bounds is None:
         bounds = CONUS_BOUNDS
 
-    # Stride-decimate the source grid before interpolation (Phase 3).
-    # GOES native CONUS is ~1500x2500 px; 4x decimation reduces the point
-    # cloud 16x with no visible loss at our 1200x800 output resolution.
-    stride = 4
-    lat = da.coords["latitude"].values[::stride, ::stride]
-    lon = da.coords["longitude"].values[::stride, ::stride]
-    data = da.values[::stride, ::stride].astype(np.float32, copy=False)
+    # Use full-resolution source pixels. Stride-decimating in scan-angle
+    # space produces geographically non-uniform point density (sparsest
+    # near the satellite limb), which makes griddata(nearest) draw large
+    # voronoi cells / vertical bands over the west coast for GOES-East.
+    # Cast to float32 to halve the working buffer.
+    lat = da.coords["latitude"].values.astype(np.float32, copy=False)
+    lon = da.coords["longitude"].values.astype(np.float32, copy=False)
+    data = da.values.astype(np.float32, copy=False)
 
     # Mask to CONUS bounds
     mask = (
