@@ -66,6 +66,7 @@ def fetch_mrms_composite(
     Or None on failure.
     """
     import gzip
+    import shutil
     import s3fs
     import tempfile
 
@@ -115,16 +116,13 @@ def fetch_mrms_composite(
         latest_file, latest_time = max(recent_files, key=lambda x: x[1])
         logger.info("Fetching MRMS: %s", latest_file)
 
-        with fs.open(latest_file, "rb") as f:
-            compressed = f.read()
-
-        # Decompress and read GRIB2
-        raw = gzip.decompress(compressed)
-
-        # Save to temporary file for cfgrib (it needs seekable file access)
+        # Stream-decompress directly to a temp file — never holds the
+        # full compressed or decompressed payload in RAM (Phase 2).
         with tempfile.NamedTemporaryFile(suffix='.grib2', delete=False) as tmp_file:
-            tmp_file.write(raw)
             tmp_path = tmp_file.name
+            with fs.open(latest_file, "rb") as f:
+                with gzip.GzipFile(fileobj=f, mode="rb") as gz:
+                    shutil.copyfileobj(gz, tmp_file, length=1024 * 1024)
 
         try:
             # Parse with cfgrib

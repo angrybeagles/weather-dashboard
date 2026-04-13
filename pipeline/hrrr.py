@@ -68,26 +68,19 @@ def fetch_hrrr(
     results: dict[str, list[xr.DataArray]] = {v: [] for v in variables.values()}
 
     for fhr in fhours:
-        # Check if all variables are cached for this forecast hour
-        all_cached = True
-        cached_data = {}
-        for friendly_name in variables.values():
-            var_cache_file = CACHE_DIR / f"hrrr_{cycle_str}_f{fhr:02d}_{friendly_name}.nc"
-            if not var_cache_file.exists():
-                all_cached = False
-                break
+        # Single combined NetCDF Dataset per forecast hour (Phase 2)
+        cache_file = CACHE_DIR / f"hrrr_{cycle_str}_f{fhr:02d}.nc"
+        if cache_file.exists():
             try:
-                cached_data[friendly_name] = xr.open_dataarray(var_cache_file)
+                cached_ds = xr.open_dataset(cache_file)
+                if all(name in cached_ds.data_vars for name in variables.values()):
+                    logger.info("Cache hit: %s fhr=%d", cycle_str, fhr)
+                    for friendly_name in variables.values():
+                        results[friendly_name].append(cached_ds[friendly_name])
+                    continue
+                cached_ds.close()
             except Exception as e:
-                logger.warning("Failed to load cached %s fhr=%d: %s", friendly_name, fhr, e)
-                all_cached = False
-                break
-
-        if all_cached:
-            logger.info("Cache hit: %s fhr=%d", cycle_str, fhr)
-            for friendly_name, da in cached_data.items():
-                results[friendly_name].append(da)
-            continue
+                logger.warning("Failed to load cache %s: %s", cache_file.name, e)
 
         logger.info("Fetching HRRR cycle=%s fhr=%d", cycle_str, fhr)
         try:
@@ -119,13 +112,12 @@ def fetch_hrrr(
                     "Failed to fetch %s for fhr=%d: %s", search_str, fhr, e
                 )
 
-        # Cache this forecast hour as NetCDF - save each variable separately
-        for friendly_name, da in merged_arrays.items():
+        # Cache as a single combined Dataset (Phase 2: 1 file per fhr, not 10)
+        if merged_arrays:
             try:
-                var_cache_file = CACHE_DIR / f"hrrr_{cycle_str}_f{fhr:02d}_{friendly_name}.nc"
-                da.to_netcdf(var_cache_file)
+                xr.Dataset(merged_arrays).to_netcdf(cache_file)
             except Exception as e:
-                logger.warning("Failed to cache %s fhr=%d: %s", friendly_name, fhr, e)
+                logger.warning("Failed to cache fhr=%d: %s", fhr, e)
 
     # Concatenate across forecast hours
     output = {}
