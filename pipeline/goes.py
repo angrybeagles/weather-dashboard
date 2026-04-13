@@ -170,6 +170,14 @@ def fetch_goes_channel(
         return None
 
 
+# Module-level PNG cache, keyed on (channel, scan_time, bounds-tuple).
+# The map-refresh callback re-invokes this every 30 s with identical inputs;
+# scipy.griddata is the dominant cost, so memoizing the rendered dict
+# eliminates it entirely between scan updates.
+_PNG_CACHE: dict[tuple, dict] = {}
+_PNG_CACHE_MAX = 4
+
+
 def goes_to_plotly_image(
     da: xr.DataArray,
     bounds: dict | None = None,
@@ -179,12 +187,22 @@ def goes_to_plotly_image(
     Convert a GOES DataArray to a dict suitable for plotly's mapbox image layer.
 
     Returns dict with keys: 'source' (base64 PNG), 'coordinates' (corner coords).
+    Memoized on (channel, scan_time, bounds) — cache size capped at 4.
     """
     from PIL import Image
     import base64
 
     if bounds is None:
         bounds = CONUS_BOUNDS
+
+    cache_key = (
+        da.attrs.get("channel"),
+        da.attrs.get("scan_time"),
+        bounds["lat_min"], bounds["lat_max"],
+        bounds["lon_min"], bounds["lon_max"],
+    )
+    if cache_key in _PNG_CACHE:
+        return _PNG_CACHE[cache_key]
 
     # Use full-resolution source pixels. Stride-decimating in scan-angle
     # space produces geographically non-uniform point density (sparsest
@@ -244,7 +262,7 @@ def goes_to_plotly_image(
     img.save(buf, format="PNG")
     b64 = base64.b64encode(buf.getvalue()).decode()
 
-    return {
+    result = {
         "source": f"data:image/png;base64,{b64}",
         "coordinates": [
             [bounds["lon_min"], bounds["lat_max"]],  # top-left
@@ -253,3 +271,20 @@ def goes_to_plotly_image(
             [bounds["lon_min"], bounds["lat_min"]],  # bottom-left
         ],
     }
+
+    _PNG_CACHE[cache_key] = result
+    while len(_PNG_CACHE) > _PNG_CACHE_MAX:
+        _PNG_CACHE.pop(next(iter(_PNG_CACHE)))
+    return result
+
+
+def clear_png_cache(channel: str | None = None) -> int:
+    """Drop cached PNGs. If channel given, only entries matching that channel."""
+    if channel is None:
+        n = len(_PNG_CACHE)
+        _PNG_CACHE.clear()
+        return n
+    to_remove = [k for k in _PNG_CACHE if k[0] == channel]
+    for k in to_remove:
+        _PNG_CACHE.pop(k, None)
+    return len(to_remove)
